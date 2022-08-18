@@ -1,0 +1,1 @@
+srun -p mm_det --job-name=yolo7 --gres=gpu:8 --ntasks=8 --ntasks-per-node=8 --cpus-per-task=4 --kill-on-bad-exit=1 python train.py --sync-bn --batch 128  --project /mnt/lustre/share_data/huanghaian/yolov7_workdir

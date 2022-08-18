@@ -57,7 +57,7 @@ if use_srun:
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 RANK = int(os.getenv('RANK', -1))
 WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
-
+print(f'============={LOCAL_RANK} {RANK} {WORLD_SIZE}==============================')
 
 def train(hyp, opt, device, tb_writer=None):
     log_buffer = LogBuffer()
@@ -625,7 +625,7 @@ if __name__ == '__main__':
     # Set DDP variables
     opt.world_size = int(os.environ['WORLD_SIZE']) if 'WORLD_SIZE' in os.environ else 1
     opt.global_rank = int(os.environ['RANK']) if 'RANK' in os.environ else -1
-    set_logging(opt.global_rank)
+    # set_logging(opt.global_rank)
     # if opt.global_rank in [-1, 0]:
     #    check_git_status()
     #    check_requirements()
@@ -651,13 +651,17 @@ if __name__ == '__main__':
     # DDP mode
     opt.total_batch_size = opt.batch_size
     device = select_device(opt.device, batch_size=opt.batch_size)
-    if opt.local_rank != -1:
-        assert torch.cuda.device_count() > opt.local_rank
-        torch.cuda.set_device(opt.local_rank)
-        device = torch.device('cuda', opt.local_rank)
-        dist.init_process_group(backend='nccl', init_method='env://')  # distributed backend
-        assert opt.batch_size % opt.world_size == 0, '--batch-size must be multiple of CUDA device count'
-        opt.batch_size = opt.total_batch_size // opt.world_size
+    if LOCAL_RANK != -1:
+        print(f'=============dist train {LOCAL_RANK}==============================')
+        msg = 'is not compatible with YOLOv5 Multi-GPU DDP training'
+        assert not opt.image_weights, f'--image-weights {msg}'
+        assert not opt.evolve, f'--evolve {msg}'
+        assert opt.batch_size != -1, f'AutoBatch with --batch-size -1 {msg}, please pass a valid --batch-size'
+        assert opt.batch_size % WORLD_SIZE == 0, f'--batch-size {opt.batch_size} must be multiple of WORLD_SIZE'
+        assert torch.cuda.device_count() > LOCAL_RANK, 'insufficient CUDA devices for DDP command'
+        torch.cuda.set_device(LOCAL_RANK)
+        device = torch.device('cuda', LOCAL_RANK)
+        dist.init_process_group(backend="nccl" if dist.is_nccl_available() else "gloo")
 
     # Hyperparameters
     with open(opt.hyp) as f:
