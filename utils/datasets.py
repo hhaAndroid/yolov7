@@ -348,11 +348,12 @@ class LoadStreams:  # multiple IP or RTSP cameras
     def __len__(self):
         return 0  # 1E12 frames = 32 streams at 30 FPS for 30 years
 
+LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 
 def img2label_paths(img_paths):
     # Define label paths as a function of image paths
     sa, sb = os.sep + 'images' + os.sep, os.sep + 'labels' + os.sep  # /images/, /labels/ substrings
-    return ['txt'.join(x.replace(sa, sb, 1).rsplit(x.split('.')[-1], 1)) for x in img_paths]
+    return [sb.join(x.rsplit(sa, 1)).rsplit('.', 1)[0] + '.txt' for x in img_paths]
 
 
 class LoadImagesAndLabels(Dataset):  # for training/testing
@@ -404,7 +405,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
 
         # Check cache
         self.label_files = img2label_paths(self.img_files)  # labels
-        cache_path = (p if p.is_file() else Path(self.label_files[0]).parent).with_suffix('.cache')  # cached labels
+        cache_path = (p if p.is_file() else Path(self.label_files[0]).parent).with_suffix('.cache')
         cache, exists = np.load(cache_path, allow_pickle=True).item(), True  # load dict
 
         # if cache_path.is_file():
@@ -415,15 +416,17 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         #     cache, exists = self.cache_labels(cache_path, prefix), False  # cache
 
         # Display cache
-        nf, nm, ne, nc, n = cache.pop('results')  # found, missing, empty, corrupted, total
-        if exists:
-            d = f"Scanning '{cache_path}' images and labels... {nf} found, {nm} missing, {ne} empty, {nc} corrupted"
+        # Display cache
+        nf, nm, ne, nc, n = cache.pop('results')  # found, missing, empty, corrupt, total
+        if exists and LOCAL_RANK in (-1, 0):
+            d = f"Scanning '{cache_path}' images and labels... {nf} found, {nm} missing, {ne} empty, {nc} corrupt"
             tqdm(None, desc=prefix + d, total=n, initial=n)  # display cache results
-        assert nf > 0 or not augment, f'{prefix}No labels in {cache_path}. Can not train without labels. See {help_url}'
+            if cache['msgs']:
+                print('\n'.join(cache['msgs']))  # display warnings
+        assert nf > 0 or not augment, f'{prefix}No labels in {cache_path}. Can not train without labels. See {HELP_URL}'
 
         # Read cache
-        cache.pop('hash')  # remove hash
-        cache.pop('version')  # remove version
+        [cache.pop(k) for k in ('hash', 'version', 'msgs')]  # remove items
         labels, shapes, self.segments = zip(*cache.values())
         self.labels = list(labels)
         self.shapes = np.array(shapes, dtype=np.float64)
