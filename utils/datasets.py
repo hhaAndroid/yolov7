@@ -405,7 +405,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         # Check cache
         self.label_files = img2label_paths(self.img_files)  # labels
         cache_path = (p if p.is_file() else Path(self.label_files[0]).parent).with_suffix('.cache')  # cached labels
-        cache, exists = torch.load(cache_path), True  # load
+        cache, exists = np.load(cache_path, allow_pickle=True).item(), True  # load dict
 
         # if cache_path.is_file():
         #     cache, exists = torch.load(cache_path), True  # load
