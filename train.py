@@ -305,7 +305,7 @@ def train(hyp, opt, device, tb_writer=None):
 
     # DDP mode
     if cuda and rank != -1:
-        model = DDP(model, device_ids=[opt.local_rank], output_device=opt.local_rank,
+        model = DDP(model, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK,
                     # nn.MultiheadAttention incompatibility with DDP https://github.com/pytorch/pytorch/issues/26698
                     find_unused_parameters=any(isinstance(layer, nn.MultiheadAttention) for layer in model.modules()))
 
@@ -669,6 +669,7 @@ if __name__ == '__main__':
 
     # Train
     if not opt.evolve:
+        print(f'========device: {device}')
         train(hyp, opt, device)
 
     # Evolve hyperparameters (optional)
@@ -710,7 +711,6 @@ if __name__ == '__main__':
             if 'anchors' not in hyp:  # anchors commented in hyp.yaml
                 hyp['anchors'] = 3
 
-        assert opt.local_rank == -1, 'DDP mode not implemented for --evolve'
         opt.notest, opt.nosave = True, True  # only test/save final epoch
         # ei = [isinstance(x, (int, float)) for x in hyp.values()]  # evolvable indices
         yaml_file = Path(opt.save_dir) / 'hyp_evolved.yaml'  # save best result here
