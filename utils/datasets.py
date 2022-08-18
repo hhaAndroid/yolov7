@@ -11,6 +11,7 @@ from itertools import repeat
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
 from threading import Thread
+import mmcv
 
 import cv2
 import numpy as np
@@ -80,6 +81,10 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
     batch_size = min(batch_size, len(dataset))
     nw = min([os.cpu_count() // world_size, batch_size if batch_size > 1 else 0, workers])  # number of workers
     sampler = torch.utils.data.distributed.DistributedSampler(dataset) if rank != -1 else None
+    if nw != workers:
+        print(f'======{path} num_workers changed from {workers} to {nw}', flush=True)
+    else:
+        print(f'======{path} num_workers {workers}', flush=True)
     loader = torch.utils.data.DataLoader if image_weights else InfiniteDataLoader
     # Use torch.utils.data.DataLoader() if dataset.properties will update during training else InfiniteDataLoader()
     dataloader = loader(dataset,
@@ -364,6 +369,18 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.path = path        
         #self.albumentations = Albumentations() if augment else None
 
+        use_ceph = True
+
+        if use_ceph:
+            file_client_args = dict(
+                backend='petrel',
+                path_mapping=dict({
+                    '/home/PJLAB/huanghaian/dataset/coco/yolov5_coco/images/': 's3://openmmlab/datasets/detection/coco/'
+                }))
+        else:
+            file_client_args = dict(backend='disk')
+        self.file_client = mmcv.FileClient(**file_client_args)
+
         try:
             f = []  # image files
             for p in path if isinstance(path, list) else [path]:
@@ -388,12 +405,14 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         # Check cache
         self.label_files = img2label_paths(self.img_files)  # labels
         cache_path = (p if p.is_file() else Path(self.label_files[0]).parent).with_suffix('.cache')  # cached labels
-        if cache_path.is_file():
-            cache, exists = torch.load(cache_path), True  # load
-            #if cache['hash'] != get_hash(self.label_files + self.img_files) or 'version' not in cache:  # changed
-            #    cache, exists = self.cache_labels(cache_path, prefix), False  # re-cache
-        else:
-            cache, exists = self.cache_labels(cache_path, prefix), False  # cache
+        cache, exists = torch.load(cache_path), True  # load
+
+        # if cache_path.is_file():
+        #     cache, exists = torch.load(cache_path), True  # load
+        #     #if cache['hash'] != get_hash(self.label_files + self.img_files) or 'version' not in cache:  # changed
+        #     #    cache, exists = self.cache_labels(cache_path, prefix), False  # re-cache
+        # else:
+        #     cache, exists = self.cache_labels(cache_path, prefix), False  # cache
 
         # Display cache
         nf, nm, ne, nc, n = cache.pop('results')  # found, missing, empty, corrupted, total
@@ -447,6 +466,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
 
         # Cache images into memory for faster training (WARNING: large datasets may exceed system RAM)
         self.imgs = [None] * n
+        self.img_npy = [Path(f).with_suffix('.npy') for f in self.img_files]
+
         if cache_images:
             if cache_images == 'disk':
                 self.im_cache_dir = Path(Path(self.img_files[0]).parent.as_posix() + '_npy')
@@ -466,6 +487,28 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                     gb += self.imgs[i].nbytes
                 pbar.desc = f'{prefix}Caching images ({gb / 1E9:.1f}GB)'
             pbar.close()
+
+    def load_image(self, i):
+        # Loads 1 image from dataset index 'i', returns (im, original hw, resized hw)
+        im, f, fn = self.imgs[i], self.img_files[i], self.img_npy[i],
+        if im is None:  # not cached in RAM
+            if fn.exists():  # load npy
+                im = np.load(fn)
+            else:  # read image
+                if self.file_client:
+                    img_bytes = self.file_client.get(f)
+                    im = mmcv.imfrombytes(img_bytes)
+                else:
+                    im = cv2.imread(f)  # BGR
+                assert im is not None, f'Image Not Found {f}'
+            h0, w0 = im.shape[:2]  # orig hw
+            r = self.img_size / max(h0, w0)  # ratio
+            if r != 1:  # if sizes are not equal
+                im = cv2.resize(im, (int(w0 * r), int(h0 * r)),
+                                interpolation=cv2.INTER_LINEAR if (self.augment or r > 1) else cv2.INTER_AREA)
+            return im, (h0, w0), im.shape[:2]  # im, hw_original, hw_resized
+        else:
+            return self.ims[i], self.im_hw0[i], self.im_hw[i]  # im, hw_original, hw_resized
 
     def cache_labels(self, path=Path('./labels.cache'), prefix=''):
         # Cache dataset labels, check images and read shapes
