@@ -57,7 +57,7 @@ if use_srun:
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 RANK = int(os.getenv('RANK', -1))
 WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
-print(f'============={LOCAL_RANK} {RANK} {WORLD_SIZE}==============================')
+
 
 def train(hyp, opt, device, tb_writer=None):
     log_buffer = LogBuffer()
@@ -69,8 +69,12 @@ def train(hyp, opt, device, tb_writer=None):
         'yolov7', log_file=log_file, log_level='INFO')
 
     logger.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()))
+    logger.info(f'opt: {opt}')
+
     save_dir, epochs, batch_size, total_batch_size, weights, rank, freeze = \
-        Path(opt.save_dir), opt.epochs, opt.batch_size, opt.total_batch_size, opt.weights, opt.global_rank, opt.freeze
+        Path(opt.save_dir), opt.epochs, opt.batch_size//WORLD_SIZE, opt.total_batch_size, opt.weights, opt.global_rank, opt.freeze
+
+    logger.info(f'total_batch_size: {total_batch_size}, batch_size: {batch_size}')
 
     # Directories
     wdir = save_dir / 'weights'
